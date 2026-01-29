@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>蒙恩行政管理雲</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 重要：Recharts 依賴 PropTypes，必須先載入 -->
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    
+    <!-- Recharts (使用穩定版本) -->
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #F8FAFC; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- Firebase SDKs (使用模組化 API) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // --- 你的 Firebase 設定 ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyCwWn1DFulW33W71ceSApUQk_1RWxxkFYw",
+            authDomain: "utility-insurance.firebaseapp.com",
+            projectId: "utility-insurance",
+            storageBucket: "utility-insurance.firebasestorage.app",
+            messagingSenderId: "179821070962",
+            appId: "1:179821070962:web:1a2303858f965e3d4a10eb"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = "admin-mgmt-115"; 
+
+        // 將實例與函式分開掛載到全域，以符合 v9+ 模組化語法
+        window.FB_DB = db;
+        window.FB_AUTH = auth;
+        window.APP_ID = appId;
+        
+        // 驗證相關函式
+        window.FB_AUTH_METHODS = { signInAnonymously, onAuthStateChanged };
+        
+        // 資料庫相關函式
+        window.FS = { collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp };
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        
+        // 從 window.Recharts 安全地解構組件
+        const getRecharts = () => window.Recharts || {};
+        const { 
+            LineChart, Line, XAxis, YAxis, CartesianGrid, 
+            Tooltip, Legend, ResponsiveContainer 
+        } = getRecharts();
+
+        // 圖示組件
+        const Icon = ({ name, className }) => {
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            }, [name]);
+            return <i data-lucide={name} className={className}></i>;
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [showModal, setShowModal] = useState(false);
+            const [modalType, setModalType] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            const [insurances, setInsurances] = useState([]);
+            const [payments, setPayments] = useState([]);
+            const [taxes, setTaxes] = useState([]);
+
+            useEffect(() => {
+                // 修正：使用模組化方式監聽驗證狀態
+                if (!window.FB_AUTH_METHODS) return;
+
+                const unsubscribe = window.FB_AUTH_METHODS.onAuthStateChanged(window.FB_AUTH, async (u) => {
+                    if (!u) {
+                        // 修正：使用模組化方式進行匿名登入
+                        try {
+                            await window.FB_AUTH_METHODS.signInAnonymously(window.FB_AUTH);
+                        } catch (error) {
+                            console.error("登入失敗:", error);
+                        }
+                    } else {
+                        setUser(u);
+                        if (window.lucide) window.lucide.createIcons();
+                    }
+                });
+                return () => unsubscribe();
+            }, []);
+
+            useEffect(() => {
+                if (!user) return;
+                const path = ['artifacts', window.APP_ID, 'public', 'data'];
+                
+                const unsubIns = window.FS.onSnapshot(window.FS.collection(window.FB_DB, ...path, 'insurances'), snap => {
+                    setInsurances(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                });
+                const unsubPay = window.FS.onSnapshot(window.FS.collection(window.FB_DB, ...path, 'payments'), snap => {
+                    setPayments(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
+                });
+                const unsubTax = window.FS.onSnapshot(window.FS.collection(window.FB_DB, ...path, 'taxes'), snap => {
+                    setTaxes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    setLoading(false);
+                });
+
+                return () => { unsubIns(); unsubPay(); unsubTax(); };
+            }, [user]);
+
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            }, [activeTab, loading]);
+
+            if (!user || loading) return (
+                <div className="h-screen flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+                    <p className="font-bold text-slate-500">蒙恩行政雲連線中...</p>
+                </div>
+            );
+
+            const handleToggleStatus = async (coll, id, current) => {
+                const ref = window.FS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', coll, id);
+                if (coll === 'payments') await window.FS.updateDoc(ref, { isPaid: !current });
+                if (coll === 'taxes') await window.FS.updateDoc(ref, { status: current === '已繳' ? '待繳' : '已繳' });
+            };
+
+            const handleAdd = async (e, type) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                const ref = window.FS.collection(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', type);
+                const data = Object.fromEntries(fd.entries());
+                if (data.amount) data.amount = Number(data.amount);
+                await window.FS.addDoc(ref, { 
+                    ...data, 
+                    createdAt: window.FS.serverTimestamp(), 
+                    isPaid: false,
+                    status: type === 'taxes' ? '待繳' : (data.status || '有效')
+                });
+                setShowModal(false);
+            };
+
+            const trendData = [
+                { period: '113/07-08', '北屯': 5200, '崇德': 4500 },
+                { period: '113/09-10', '北屯': 4200, '崇德': 3800 },
+                { period: '113/11-12', '北屯': 3500, '崇德': 3100 },
+            ];
+
+            return (
+                <div className="flex min-h-screen">
+                    <aside className="w-64 bg-white border-r hidden md:flex flex-col sticky top-0 h-screen">
+                        <div className="p-8">
+                            <div className="bg-indigo-600 text-white p-5 rounded-[2rem] shadow-xl shadow-indigo-100">
+                                <h1 className="font-black text-lg">行政管理雲</h1>
+                                <p className="text-[10px] font-bold opacity-70 uppercase tracking-widest">115 System</p>
+                            </div>
+                        </div>
+                        <nav className="flex-1 px-4 space-y-1">
+                            {[
+                                { id: 'dashboard', label: '儀表板總覽', icon: 'layout-dashboard' },
+                                { id: 'utilities', label: '水電電信登記', icon: 'zap' },
+                                { id: 'taxes', label: '規費管理', icon: 'receipt' },
+                                { id: 'insurance', label: '保險合約追蹤', icon: 'shield-check' }
+                            ].map(t => (
+                                <button 
+                                    key={t.id} 
+                                    onClick={() => setActiveTab(t.id)} 
+                                    className={`w-full flex items-center space-x-3 px-6 py-4 rounded-2xl font-bold text-sm transition-all ${activeTab === t.id ? 'bg-indigo-50 text-indigo-600 shadow-sm' : 'text-slate-400 hover:bg-slate-50'}`}
+                                >
+                                    <Icon name={t.icon} className="w-4 h-4" />
+                                    <span>{t.label}</span>
+                                </button>
+                            ))}
+                        </nav>
+                    </aside>
+
+                    <main className="flex-1 p-10 overflow-y-auto">
+                        <header className="flex justify-between items-center mb-10">
+                            <div>
+                                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{activeTab}</h2>
+                                <p className="text-xs text-slate-400 font-bold">蒙恩聽障烘焙坊 行政管理平台</p>
+                            </div>
+                            <div className="flex items-center space-x-4">
+                                <div className="text-right">
+                                    <p className="text-sm font-black text-slate-800">蔡臻妮</p>
+                                    <p className="text-[10px] text-emerald-500 font-bold tracking-widest flex items-center justify-end">
+                                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse mr-1.5"></span>
+                                        雲端同步中
+                                    </p>
+                                </div>
+                                <div className="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden">
+                                    <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Jenny" alt="avatar" />
+                                </div>
+                            </div>
+                        </header>
+
+                        {activeTab === 'dashboard' && (
+                            <div className="space-y-8">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <div className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                                        <p className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">待繳費項目</p>
+                                        <h3 className="text-3xl font-black text-slate-800">{payments.filter(p=>!p.isPaid).length + taxes.filter(t=>t.status!=='已繳').length} <span className="text-sm font-bold text-slate-400">筆</span></h3>
+                                    </div>
+                                    <div className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                                        <p className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">保險警示項目</p>
+                                        <h3 className="text-3xl font-black text-rose-500">{insurances.filter(i=>i.status!=='有效').length} <span className="text-sm font-bold text-slate-400">件</span></h3>
+                                    </div>
+                                    <div className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm">
+                                        <p className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">資料庫連線</p>
+                                        <h3 className="text-3xl font-black text-emerald-500">穩定連線</h3>
+                                    </div>
+                                </div>
+
+                                {LineChart && (
+                                    <div className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                                        <h4 className="font-black text-lg text-slate-800 mb-8 flex items-center">
+                                            <Icon name="zap" className="w-5 h-5 mr-2 text-yellow-500 fill-yellow-500" /> 
+                                            主要據點用電趨勢
+                                        </h4>
+                                        <div className="h-72 w-full">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <LineChart data={trendData}>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                    <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} dy={10} />
+                                                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} />
+                                                    <Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
+                                                    <Legend iconType="circle" />
+                                                    <Line type="monotone" dataKey="北屯" stroke="#6366f1" strokeWidth={4} dot={{r: 6, fill: '#6366f1', strokeWidth: 3, stroke: '#fff'}} />
+                                                    <Line type="monotone" dataKey="崇德" stroke="#10b981" strokeWidth={4} dot={{r: 6, fill: '#10b981', strokeWidth: 3, stroke: '#fff'}} />
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'utilities' && (
+                            <div className="space-y-6">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="font-black text-xl text-slate-800">水電電信費管理紀錄</h3>
+                                    <button onClick={() => { setModalType('utility'); setShowModal(true); }} className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl shadow-indigo-100 flex items-center">
+                                        <Icon name="plus" className="w-4 h-4 mr-2" /> 新增登記
+                                    </button>
+                                </div>
+                                <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-50 text-[10px] text-slate-400 font-black uppercase tracking-widest">
+                                            <tr>
+                                                <th className="px-10 py-6">據點</th>
+                                                <th className="px-10 py-6">類別</th>
+                                                <th className="px-10 py-6">期別</th>
+                                                <th className="px-10 py-6">金額</th>
+                                                <th className="px-10 py-6">狀態</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50">
+                                            {payments.map(p => (
+                                                <tr key={p.id} className="text-sm hover:bg-slate-50/50 transition-colors">
+                                                    <td className="px-10 py-6 font-bold text-slate-700">{p.location}</td>
+                                                    <td className="px-10 py-6">
+                                                        <span className={`px-3 py-1 rounded-lg text-[10px] font-black border ${p.type === '電信' ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-yellow-50 text-yellow-600 border-yellow-100'}`}>
+                                                            {p.type || '電力'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-10 py-6 text-slate-400 font-bold">{p.period}</td>
+                                                    <td className="px-10 py-6 font-black text-slate-800">${p.amount?.toLocaleString()}</td>
+                                                    <td className="px-10 py-6">
+                                                        <button 
+                                                            onClick={() => handleToggleStatus('payments', p.id, p.isPaid)} 
+                                                            className={`px-4 py-1.5 rounded-full text-[10px] font-black border transition-all ${p.isPaid ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-500 border-amber-100'}`}
+                                                        >
+                                                            {p.isPaid ? '已繳費' : '待繳費'}
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'taxes' && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {taxes.map(t => (
+                                    <div key={t.id} className="bg-white p-8 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col justify-between">
+                                        <div>
+                                            <div className="flex justify-between items-start mb-6">
+                                                <span className="text-[10px] font-black text-indigo-500 bg-indigo-50 px-3 py-1 rounded-lg uppercase tracking-wider">{t.period}</span>
+                                                <span className={`text-[10px] font-black px-3 py-1 rounded-full border ${t.status === '已繳' ? 'bg-emerald-50 text-emerald-500 border-emerald-100' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>
+                                                    {t.status}
+                                                </span>
+                                            </div>
+                                            <h4 className="font-black text-slate-800 mb-2">{t.name}</h4>
+                                            <p className="text-xs text-slate-400 font-bold mb-8">繳款管道：{t.payer || '潘哥'}</p>
+                                        </div>
+                                        <button 
+                                            onClick={() => handleToggleStatus('taxes', t.id, t.status)} 
+                                            className={`w-full py-3 rounded-2xl text-[10px] font-black transition-all ${t.status === '已繳' ? 'bg-slate-100 text-slate-400' : 'bg-slate-900 text-white shadow-lg'}`}
+                                        >
+                                            {t.status === '已繳' ? '恢復為待繳' : '確認已繳費'}
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {activeTab === 'insurance' && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {insurances.map(i => (
+                                    <div key={i.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm group hover:shadow-xl transition-all">
+                                        <div className="flex justify-between mb-6">
+                                            <span className="bg-slate-100 px-3 py-1.5 rounded-xl text-[10px] font-black text-slate-400 uppercase tracking-widest">{i.type || '一般'}</span>
+                                            <span className={`text-[10px] font-black ${i.status === '有效' ? 'text-emerald-500' : 'text-amber-500'}`}>● {i.status}</span>
+                                        </div>
+                                        <h4 className="font-black text-slate-800 text-base mb-1 truncate">{i.name}</h4>
+                                        <p className="text-xs text-slate-400 font-bold mb-8">{i.provider || '保險公司'}</p>
+                                        <div className="bg-slate-50 p-5 rounded-3xl text-center">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase mb-1">合約到期日</p>
+                                            <p className="text-sm font-black text-slate-700">{i.end}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </main>
+
+                    {showModal && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
+                            <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl scale-100 transition-transform">
+                                <div className="flex justify-between items-center mb-8">
+                                    <h3 className="text-xl font-black text-slate-800">新增行政登記</h3>
+                                    <button onClick={() => setShowModal(false)} className="bg-slate-100 p-2 rounded-full text-slate-400 hover:text-slate-600 transition-colors">
+                                        <Icon name="x" className="w-5 h-5" />
+                                    </button>
+                                </div>
+                                <form onSubmit={(e) => handleAdd(e, modalType === 'utility' ? 'payments' : 'insurances')} className="space-y-5">
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">據點 / 名稱</label>
+                                        <input name="location" placeholder="輸入名稱..." className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-indigo-500 transition-all" required />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">期別 / 到期</label>
+                                            <input name="period" placeholder="115/01" className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-indigo-500 transition-all" required />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">金額</label>
+                                            <input name="amount" type="number" placeholder="0" className="w-full bg-slate-50 p-4 rounded-2xl text-sm font-bold border-none outline-none focus:ring-2 focus:ring-indigo-500 transition-all" required />
+                                        </div>
+                                    </div>
+                                    <button type="submit" className="w-full py-5 bg-indigo-600 text-white rounded-[1.2rem] font-black shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all mt-4">
+                                        確認提交到雲端
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
