@@ -24,7 +24,6 @@
         body { font-family: 'Noto Sans TC', sans-serif; background-color: #F8FAFC; }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .nav-active { background-color: #EEF2FF; color: #4F46E5; box-shadow: inset 4px 0 0 #4F46E5; }
-        .tab-transition { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
     </style>
 </head>
 <body>
@@ -62,7 +61,7 @@
         const { useState, useEffect, useMemo } = React;
         const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } = window.Recharts;
 
-        // 圖示組件：修正後的穩定版
+        // 圖示組件
         const Icon = ({ name, className }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
             return <i data-lucide={name} className={className}></i>;
@@ -82,7 +81,7 @@
             const [waterBills, setWaterBills] = useState([]);
             const [taxes, setTaxes] = useState([]);
 
-            // 初始化驗證
+            // 1. 初始化驗證
             useEffect(() => {
                 const initAuth = () => {
                     if (!window.FB_AUTH_METHODS || !window.FB_AUTH) return;
@@ -99,7 +98,7 @@
                 return () => { if (unsub) unsub(); window.removeEventListener('firebase-ready', handleReady); };
             }, []);
 
-            // 數據實時同步與初始化
+            // 2. 數據實時同步與初始化
             useEffect(() => {
                 if (!user || !window.FS) return;
                 const path = ['artifacts', window.APP_ID, 'public', 'data'];
@@ -119,29 +118,29 @@
                     setInsurances(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 });
 
-                // 監聽規費項目 (並初始化您提供的清單)
+                // 監聽規費項目 (並自動初始化您提供的清單)
                 const taxRef = window.FS.collection(window.FB_DB, ...path, 'taxes');
                 const unsubTax = window.FS.onSnapshot(taxRef, (snap) => {
                     const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                     if (docs.length === 0) {
                         const defaultTaxes = [
+                            { name: "管理費", period: "1年", payer: "匯款", status: "待繳" },
+                            { name: "電梯基金", period: "1季", payer: "零用金", status: "待繳" },
                             { name: "勞工退休金", period: "每月", payer: "潘哥", status: "待繳" },
                             { name: "勞工保險費", period: "每月", payer: "潘哥", status: "待繳" },
                             { name: "全民健保費", period: "每月", payer: "潘哥", status: "待繳" },
-                            { name: "管理費", period: "1年", payer: "匯款", status: "待繳" },
-                            { name: "電梯基金", period: "1季", payer: "零用金", status: "待繳" },
                             { name: "補充保險費(兩張)", period: "視需求", payer: "潘哥", status: "待繳" },
                             { name: "各類所得稅(兩張)", period: "視需求", payer: "潘哥", status: "待繳" },
                             { name: "牌照稅", period: "每年4月", payer: "潘哥", status: "待繳" },
                             { name: "燃料稅", period: "每年7月", payer: "潘哥", status: "待繳" },
-                            { name: "營業稅", period: "2個月", payer: "潘哥", status: "待繳" },
+                            { name: "廢一般物品及容器繳款", period: "每2月", payer: "零用金", status: "待繳" },
+                            { name: "營業稅", period: "每2月", payer: "潘哥", status: "待繳" },
                             { name: "地價稅(2張)", period: "每年11月", payer: "潘哥", status: "待繳" },
                             { name: "房屋稅-大雅物流中心", period: "每年5月", payer: "潘哥", status: "待繳" },
                             { name: "房屋稅-崇德門市", period: "每年5月", payer: "潘哥", status: "待繳" },
                             { name: "房屋稅-大雅宿舍(民權街)", period: "每年5月", payer: "潘哥", status: "待繳" },
                             { name: "房屋稅-營業(180巷11號)", period: "每年5月", payer: "潘哥", status: "待繳" },
-                            { name: "房屋稅-住家(180巷11號)", period: "每年5月", payer: "潘哥", status: "待繳" },
-                            { name: "廢一般物品及容器繳款", period: "視需求", payer: "零用金", status: "待繳" }
+                            { name: "房屋稅-住家(180巷11號)", period: "每年5月", payer: "潘哥", status: "待繳" }
                         ];
                         defaultTaxes.forEach(t => window.FS.addDoc(taxRef, t));
                     } else {
@@ -153,7 +152,7 @@
                 return () => { unsubPower(); unsubWater(); unsubIns(); unsubTax(); };
             }, [user]);
 
-            // 操作邏輯
+            // 3. 操作邏輯
             const handleAddRecord = async (e) => {
                 e.preventDefault();
                 const fd = new FormData(e.target);
@@ -188,26 +187,26 @@
                 await window.FS.deleteDoc(window.FS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', coll, id));
             };
 
-            // 圖表趨勢數據 (模擬近三期)
+            // 圖表趨勢數據 (模擬數據，實際環境可從 bills 中彙整)
             const trendData = [
-                { period: '113/07-08', power: 5200, waterCost: 2400 },
-                { period: '113/09-10', power: 4200, waterCost: 2350 },
-                { period: '113/11-12', power: 3500, waterCost: 2100 },
+                { period: '113/07-08', power: 5200, water: 320 },
+                { period: '113/09-10', power: 4200, water: 310 },
+                { period: '113/11-12', power: 3500, water: 290 },
             ];
 
             if (!user || loading) return (
                 <div className="h-screen flex flex-col items-center justify-center bg-slate-50">
                     <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p className="font-bold text-slate-400">蒙恩行政雲 準備中...</p>
+                    <p className="font-bold text-slate-400 tracking-widest uppercase">蒙恩行政雲 啟動中...</p>
                 </div>
             );
 
             return (
-                <div className="flex min-h-screen bg-[#F8FAFC] antialiased">
+                <div className="flex min-h-screen bg-[#F8FAFC]">
                     {/* Sidebar */}
                     <aside className="w-64 bg-white border-r hidden lg:flex flex-col sticky top-0 h-screen shadow-sm">
                         <div className="p-8">
-                            <div className="bg-indigo-600 text-white p-6 rounded-[2rem] shadow-xl shadow-indigo-100 transition-all hover:scale-105">
+                            <div className="bg-indigo-600 text-white p-6 rounded-[2rem] shadow-xl shadow-indigo-100">
                                 <h1 className="font-black text-lg tracking-tighter">行政管理雲</h1>
                                 <p className="text-[10px] font-bold opacity-60 uppercase tracking-widest mt-1">Version 115.1</p>
                             </div>
@@ -228,10 +227,7 @@
                         <div className="p-8">
                             <div className="bg-slate-900 rounded-[2rem] p-4 text-white flex items-center space-x-3">
                                 <div className="w-10 h-10 bg-indigo-500 rounded-full flex-shrink-0 border-2 border-white/20"></div>
-                                <div className="overflow-hidden">
-                                    <p className="text-xs font-black truncate">蔡臻妮</p>
-                                    <p className="text-[10px] text-slate-500 font-bold uppercase">Admin</p>
-                                </div>
+                                <div><p className="text-xs font-black truncate">蔡臻妮</p><p className="text-[10px] text-slate-500 font-bold uppercase">Admin</p></div>
                             </div>
                         </div>
                     </aside>
@@ -241,31 +237,31 @@
                         <header className="flex justify-between items-end mb-10">
                             <div>
                                 <h2 className="text-3xl font-black text-slate-800 tracking-tight">
-                                    {activeTab === 'dashboard' ? '行政數據看板' : activeTab === 'utilities' ? '水電電信追蹤' : activeTab === 'taxes' ? '政府規費管理' : '保險合約追蹤'}
+                                    {activeTab === 'dashboard' ? '行政數據看板' : activeTab === 'utilities' ? '水電費用登記' : activeTab === 'taxes' ? '政府規費管理' : '保險合約追蹤'}
                                 </h2>
-                                <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">蒙恩聽障烘焙坊 管理平台</p>
+                                <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">蒙恩聽障烘焙坊</p>
                             </div>
                             <div className="flex items-center space-x-2 text-[10px] font-black text-emerald-500 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-100">
-                                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse mr-2"></span>
                                 雲端同步中
                             </div>
                         </header>
 
-                        {/* 分頁內容 */}
+                        {/* 1. Dashboard */}
                         {activeTab === 'dashboard' && (
                             <div className="space-y-8 animate-in fade-in duration-500">
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm transition-all hover:shadow-md">
-                                        <p className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">待處理項目</p>
-                                        <h3 className="text-3xl font-black text-indigo-600">{taxes.filter(t=>t.status!=='已繳').length} <span className="text-sm text-slate-300">筆</span></h3>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 font-black text-center">
+                                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                                        <p className="text-[10px] text-slate-400 mb-2 uppercase tracking-widest">待處理規費</p>
+                                        <h3 className="text-3xl text-indigo-600 font-black">{taxes.filter(t=>t.status!=='已繳').length} 筆</h3>
                                     </div>
-                                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm transition-all hover:shadow-md">
-                                        <p className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">未繳水電</p>
-                                        <h3 className="text-3xl font-black text-amber-500">{powerBills.filter(p=>!p.isPaid).length + waterBills.filter(p=>!p.isPaid).length} <span className="text-sm text-slate-300">筆</span></h3>
+                                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                                        <p className="text-[10px] text-slate-400 mb-2 uppercase tracking-widest">水電未確認</p>
+                                        <h3 className="text-3xl text-amber-500 font-black">{powerBills.filter(p=>!p.isPaid).length + waterBills.filter(p=>!p.isPaid).length} 筆</h3>
                                     </div>
-                                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm transition-all hover:shadow-md">
-                                        <p className="text-[10px] font-black text-slate-400 mb-2 uppercase tracking-widest">保險警示</p>
-                                        <h3 className="text-3xl font-black text-rose-500">{insurances.length} <span className="text-sm text-slate-300">件</span></h3>
+                                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                                        <p className="text-[10px] text-slate-400 mb-2 uppercase tracking-widest">保險警示</p>
+                                        <h3 className="text-3xl text-rose-500 font-black">{insurances.length} 件</h3>
                                     </div>
                                 </div>
 
@@ -277,12 +273,7 @@
                                         <div className="h-64">
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <AreaChart data={trendData}>
-                                                    <defs>
-                                                        <linearGradient id="colorPower" x1="0" y1="0" x2="0" y2="1">
-                                                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.1}/>
-                                                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                                                        </linearGradient>
-                                                    </defs>
+                                                    <defs><linearGradient id="colorPower" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.1}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient></defs>
                                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                                     <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 700}} dy={10} />
                                                     <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 700}} />
@@ -294,22 +285,17 @@
                                     </div>
                                     <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100">
                                         <h4 className="font-black text-sm text-slate-400 mb-8 flex items-center uppercase tracking-widest">
-                                            <Icon name="droplet" className="w-4 h-4 mr-2 text-blue-500 fill-blue-500" /> 水費支出趨勢 (元)
+                                            <Icon name="droplet" className="w-4 h-4 mr-2 text-blue-500 fill-blue-500" /> 主要水費趨勢 (度)
                                         </h4>
                                         <div className="h-64">
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <AreaChart data={trendData}>
-                                                    <defs>
-                                                        <linearGradient id="colorWater" x1="0" y1="0" x2="0" y2="1">
-                                                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
-                                                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                                                        </linearGradient>
-                                                    </defs>
+                                                    <defs><linearGradient id="colorWater" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/></linearGradient></defs>
                                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                                     <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 700}} dy={10} />
                                                     <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10, fontWeight: 700}} />
                                                     <Tooltip contentStyle={{borderRadius: '20px', border: 'none'}} />
-                                                    <Area type="monotone" dataKey="waterCost" stroke="#3b82f6" strokeWidth={4} fillOpacity={1} fill="url(#colorWater)" dot={{r: 6, fill: '#3b82f6', strokeWidth: 3, stroke: '#fff'}} />
+                                                    <Area type="monotone" dataKey="water" stroke="#3b82f6" strokeWidth={4} fillOpacity={1} fill="url(#colorWater)" dot={{r: 6, fill: '#3b82f6', strokeWidth: 3, stroke: '#fff'}} />
                                                 </AreaChart>
                                             </ResponsiveContainer>
                                         </div>
@@ -318,6 +304,7 @@
                             </div>
                         )}
 
+                        {/* 2. Utilities */}
                         {activeTab === 'utilities' && (
                             <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
                                 <div className="flex space-x-4">
@@ -330,6 +317,7 @@
                                         <Icon name="droplet" className="w-10 h-10 opacity-20" />
                                     </button>
                                 </div>
+
                                 <div className="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
                                     <table className="w-full text-left">
                                         <thead className="bg-slate-50 text-[10px] text-slate-400 font-black uppercase tracking-widest">
@@ -337,7 +325,7 @@
                                                 <th className="px-10 py-6">類別</th>
                                                 <th className="px-10 py-6">據點</th>
                                                 <th className="px-10 py-6 text-center">電度/度數</th>
-                                                <th className="px-10 py-6 text-center">金額</th>
+                                                <th className="px-10 py-6 text-center font-black">金額</th>
                                                 <th className="px-10 py-6 text-center">狀態</th>
                                                 <th className="px-10 py-6"></th>
                                             </tr>
@@ -347,13 +335,13 @@
                                                 <tr key={p.id} className="text-sm font-bold">
                                                     <td className="px-10 py-6"><span className={`px-3 py-1 rounded-xl text-[10px] font-black uppercase ${p.usage ? 'bg-yellow-50 text-yellow-600' : 'bg-blue-50 text-blue-600'}`}>{p.usage ? '電力' : '水費'}</span></td>
                                                     <td className="px-10 py-6 text-slate-800 font-black">{p.location}</td>
-                                                    <td className="px-10 py-6 text-center text-slate-500 font-black">{p.usage?.toLocaleString() || '-'}</td>
+                                                    <td className="px-10 py-6 text-center text-slate-400 font-black">{p.usage?.toLocaleString() || '-'}</td>
                                                     <td className="px-10 py-6 text-center font-black text-slate-800">${p.amount?.toLocaleString()}</td>
                                                     <td className="px-10 py-6 text-center">
                                                         <button onClick={() => toggleStatus(p.usage ? 'powerBills' : 'waterBills', p.id, p.isPaid)} className={`px-4 py-1.5 rounded-full text-[10px] font-black border transition-all ${p.isPaid ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>{p.isPaid ? '已繳費' : '待確認'}</button>
                                                     </td>
                                                     <td className="px-10 py-6 text-right">
-                                                        <button onClick={() => deleteRecord(p.usage ? 'powerBills' : 'waterBills', p.id)} className="text-slate-200 hover:text-rose-500"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                                        <button onClick={() => deleteRecord(p.usage ? 'powerBills' : 'waterBills', p.id)} className="text-slate-200 hover:text-rose-500 transition-colors"><Icon name="trash-2" className="w-4 h-4" /></button>
                                                     </td>
                                                 </tr>
                                             ))}
@@ -363,10 +351,11 @@
                             </div>
                         )}
 
+                        {/* 3. Taxes */}
                         {activeTab === 'taxes' && (
                             <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
-                                <div className="flex justify-between items-center px-2">
-                                    <h3 className="font-black text-xl text-slate-800 tracking-tight">規費規範清單</h3>
+                                <div className="flex justify-between items-center px-4">
+                                    <h3 className="font-black text-xl text-slate-800 tracking-tight">全年度規費清單</h3>
                                     <button onClick={() => { setModalType('tax'); setShowModal(true); }} className="bg-slate-900 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl flex items-center hover:bg-black transition-all">
                                         <Icon name="plus" className="w-4 h-4 mr-2" /> 新增其他稅目
                                     </button>
@@ -377,11 +366,11 @@
                                             <button onClick={() => deleteRecord('taxes', t.id)} className="absolute top-6 right-6 text-slate-100 hover:text-rose-500 transition-colors opacity-0 group-hover:opacity-100"><Icon name="x" className="w-4 h-4" /></button>
                                             <div>
                                                 <div className="flex justify-between items-start mb-6">
-                                                    <span className="text-[10px] font-black text-indigo-500 bg-indigo-50 px-3 py-1 rounded-lg uppercase">{t.period}</span>
+                                                    <span className="text-[10px] font-black text-indigo-500 bg-indigo-50 px-3 py-1 rounded-lg uppercase tracking-widest">{t.period}</span>
                                                     <span className={`text-[10px] font-black px-3 py-1 rounded-full border ${t.status === '已繳' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>{t.status}</span>
                                                 </div>
-                                                <h4 className="font-black text-slate-800 text-base mb-2 leading-tight">{t.name}</h4>
-                                                <p className="text-[10px] text-slate-400 font-bold mb-8 uppercase tracking-widest">Payer: {t.payer || '潘哥'}</p>
+                                                <h4 className="font-black text-slate-800 text-base mb-2 leading-tight tracking-tighter">{t.name}</h4>
+                                                <p className="text-[10px] text-slate-400 font-bold mb-8 uppercase tracking-widest">負責人: {t.payer || '待定'}</p>
                                             </div>
                                             <button onClick={() => toggleStatus('taxes', t.id, t.status)} className={`w-full py-4 rounded-2xl text-[10px] font-black transition-all ${t.status === '已繳' ? 'bg-slate-50 text-slate-300 hover:bg-slate-100' : 'bg-slate-900 text-white shadow-lg hover:bg-black'}`}>
                                                 {t.status === '已繳' ? '恢復為待處理' : '標記為已繳費'}
@@ -392,26 +381,27 @@
                             </div>
                         )}
 
+                        {/* 4. Insurance */}
                         {activeTab === 'insurance' && (
                             <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
-                                <div className="flex justify-between items-center px-2">
+                                <div className="flex justify-between items-center px-4">
                                     <h3 className="font-black text-xl text-slate-800 tracking-tight">各類保險追蹤表</h3>
-                                    <button onClick={() => { setModalType('insurance'); setShowModal(true); }} className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl flex items-center hover:bg-indigo-700 transition-all">
+                                    <button onClick={() => { setModalType('insurance'); setShowModal(true); }} className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black text-sm shadow-xl flex items-center hover:bg-indigo-700 transition-all font-black">
                                         <Icon name="plus" className="w-4 h-4 mr-2" /> 新增合約
                                     </button>
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                     {insurances.map(i => (
                                         <div key={i.id} className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all relative overflow-hidden group">
-                                            <button onClick={() => deleteRecord('insurances', i.id)} className="absolute top-8 right-8 text-slate-100 hover:text-rose-500 z-10"><Icon name="trash-2" className="w-4 h-4" /></button>
-                                            <div className="flex justify-between mb-8 relative z-10">
-                                                <span className="bg-slate-50 px-4 py-1.5 rounded-xl text-[10px] font-black text-slate-400 uppercase tracking-widest">{i.type || '一般'}</span>
+                                            <button onClick={() => deleteRecord('insurances', i.id)} className="absolute top-8 right-8 text-slate-100 hover:text-rose-500 transition-colors"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                            <div className="flex justify-between mb-8">
+                                                <span className="bg-slate-100 px-4 py-1.5 rounded-xl text-[10px] font-black text-slate-400 uppercase tracking-widest">{i.type || '一般'}</span>
                                                 <span className={`text-[10px] font-black ${i.status === '有效' ? 'text-emerald-500' : 'text-amber-500'}`}>● {i.status}</span>
                                             </div>
-                                            <h4 className="font-black text-slate-800 text-lg mb-2 relative z-10">{i.name}</h4>
-                                            <p className="text-xs text-slate-400 font-bold mb-10 italic relative z-10">{i.provider || '保險公司'}</p>
+                                            <h4 className="font-black text-slate-800 text-lg mb-2 truncate tracking-tight">{i.name}</h4>
+                                            <p className="text-xs text-slate-400 font-bold mb-10 italic leading-relaxed">{i.provider || '保險公司'}</p>
                                             <div className="bg-slate-50 p-6 rounded-[2rem] text-center border border-slate-100/50">
-                                                <p className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">合約到期日</p>
+                                                <p className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest font-black">合約到期日</p>
                                                 <p className="text-sm font-black text-slate-700 tracking-tight">{i.end}</p>
                                             </div>
                                         </div>
@@ -426,37 +416,39 @@
                         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
                             <div className="bg-white rounded-[3rem] w-full max-w-md p-12 shadow-2xl scale-100 transition-all border border-white/20">
                                 <div className="flex justify-between items-center mb-10">
-                                    <h3 className="text-2xl font-black text-slate-800">
-                                        {modalType === 'electricity' ? '登記電費度數' : modalType === 'water' ? '登記水費金額' : modalType === 'tax' ? '新增規費規範' : '建立保險合約'}
+                                    <h3 className="text-2xl font-black text-slate-800 tracking-tight">
+                                        {modalType === 'electricity' ? '登記電費度數' : 
+                                         modalType === 'water' ? '登記水費金額' : 
+                                         modalType === 'tax' ? '新增規費規範' : '建立保險合約'}
                                     </h3>
-                                    <button onClick={() => setShowModal(false)} className="bg-slate-50 p-3 rounded-full text-slate-400 hover:text-rose-500 transition-all"><Icon name="x" className="w-5 h-5" /></button>
+                                    <button onClick={() => setShowModal(false)} className="bg-slate-50 p-3 rounded-full text-slate-400 hover:text-rose-500 transition-all font-black"><Icon name="x" className="w-5 h-5" /></button>
                                 </div>
                                 <form onSubmit={handleAddRecord} className="space-y-6">
                                     {(modalType === 'electricity' || modalType === 'water') && (
                                         <>
-                                            <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-bold font-black">據點名稱</label><input name="location" placeholder="如：北屯總部" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner" required /></div>
+                                            <div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-black">據點名稱</label><input name="location" placeholder="如：北屯總部" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner" required /></div>
                                             <div className="grid grid-cols-2 gap-5">
-                                                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-bold">期別</label><input name="period" placeholder="115/01" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner font-black" required /></div>
-                                                <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-bold">{modalType === 'electricity' ? '電度/度數' : '度數(選填)'}</label><input name="usage" type="number" placeholder="0" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner font-black" required={modalType === 'electricity'} /></div>
+                                                <div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">期別</label><input name="period" placeholder="115/01" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner" required /></div>
+                                                <div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-black font-black">度數/電度</label><input name="usage" type="number" placeholder="0" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner" required={modalType === 'electricity'} /></div>
                                             </div>
-                                            <div className="space-y-1 font-black"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-bold font-black font-black">繳費總金額</label><input name="amount" type="number" placeholder="0" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner text-indigo-600 font-black" required /></div>
+                                            <div className="space-y-1 font-black"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">繳費總金額</label><input name="amount" type="number" placeholder="0" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner text-indigo-600" required /></div>
                                         </>
                                     )}
                                     {modalType === 'tax' && (
                                         <>
-                                            <div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">規費名稱</label><input name="name" placeholder="如：房屋稅-崇德" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none outline-none shadow-inner" required /></div>
-                                            <div className="grid grid-cols-2 gap-5"><div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">週期</label><input name="period" placeholder="如：每年5月" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div><div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">負責人</label><input name="payer" placeholder="潘哥" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div></div>
+                                            <div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">規費名稱</label><input name="name" placeholder="如：房屋稅-崇德" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div>
+                                            <div className="grid grid-cols-2 gap-5"><div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">週期</label><input name="period" placeholder="如：每年5月" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div><div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-bold">負責人</label><input name="payer" placeholder="潘哥" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div></div>
                                         </>
                                     )}
                                     {modalType === 'insurance' && (
                                         <>
-                                            <div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">保險合約標的</label><input name="name" placeholder="車牌或門店名稱" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div>
-                                            <div className="grid grid-cols-2 gap-5"><div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">公司</label><input name="provider" placeholder="新光/新安東京" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div><div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest tracking-widest">到期日</label><input name="end" placeholder="115.12.31" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div></div>
-                                            <div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">類別</label><input name="type" placeholder="車險/火險/責任險" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div>
+                                            <div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-black">保險合約標的</label><input name="name" placeholder="車牌或據點名稱" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div>
+                                            <div className="grid grid-cols-2 gap-5"><div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest tracking-widest">保險公司</label><input name="provider" placeholder="新安東京/新光" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div><div className="space-y-1 font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest">到期日期</label><input name="end" placeholder="115.12.31" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div></div>
+                                            <div className="space-y-1 font-bold font-bold font-bold font-bold"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 tracking-widest font-black">類別</label><input name="type" placeholder="車險/火險/責任險" className="w-full bg-slate-50 p-5 rounded-2xl text-sm font-bold border-none shadow-inner outline-none" required /></div>
                                         </>
                                     )}
                                     <button type="submit" className="w-full py-6 bg-indigo-600 text-white rounded-[2rem] font-black shadow-2xl shadow-indigo-200 hover:bg-indigo-700 transition-all mt-6 tracking-widest uppercase">
-                                        發布至雲端資料庫
+                                        同步發布至雲端
                                     </button>
                                 </form>
                             </div>
