@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>蒙恩行政管理雲 v115 - 跨年度全功能版</title>
+    <title>蒙恩行政管理雲 v115 - 修正儲存與數據版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -17,6 +17,8 @@
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .nav-active { background-color: #EEF2FF; color: #4F46E5; box-shadow: inset 4px 0 0 #4F46E5; }
         .transition-soft { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .loading-spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -53,13 +55,12 @@
         const { useState, useEffect, useMemo } = React;
         const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } = window.Recharts;
 
-        // 圖示組件
         const Icon = ({ name, className }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
             return <i data-lucide={name} className={className}></i>;
         };
 
-        // 定義標準期別：包含 114 年與 115 年
+        // 標準期別列表 (114-115)
         const PERIODS = [
             "114/01-02", "114/03-04", "114/05-06", "114/07-08", "114/09-10", "114/11-12",
             "115/01-02", "115/03-04", "115/05-06", "115/07-08", "115/09-10", "115/11-12"
@@ -74,12 +75,11 @@
             const [modalType, setModalType] = useState(null); 
             const [editingItem, setEditingItem] = useState(null);
             const [loading, setLoading] = useState(true);
+            const [isSaving, setIsSaving] = useState(false);
 
-            // 篩選器狀態：預設顯示從 114 年開始的所有資料
             const [filterStart, setFilterStart] = useState(PERIODS[0]);
             const [filterEnd, setFilterEnd] = useState(PERIODS[PERIODS.length - 1]);
 
-            // 資料狀態
             const [insurances, setInsurances] = useState([]);
             const [powerBills, setPowerBills] = useState([]);
             const [waterBills, setWaterBills] = useState([]);
@@ -111,20 +111,19 @@
                 return () => { unsubP(); unsubW(); unsubI(); unsubT(); };
             }, [user]);
 
-            // 儀表板數據彙整邏輯
             const filteredChartData = useMemo(() => {
                 const startIdx = PERIODS.indexOf(filterStart);
                 const endIdx = PERIODS.indexOf(filterEnd);
-                const activeRange = PERIODS.slice(Math.min(startIdx, endIdx), Math.max(startIdx, endIdx) + 1);
+                const activeRange = PERIODS.slice(startIdx, endIdx + 1);
 
                 return activeRange.map(p => {
                     const row = { period: p };
                     powerBills.filter(b => b.period === p).forEach(b => {
-                        const key = `${b.location}電`;
+                        const key = `${b.location.trim()}電`;
                         row[key] = (row[key] || 0) + (Number(b.usage) || 0);
                     });
                     waterBills.filter(b => b.period === p).forEach(b => {
-                        const key = `${b.location}水`;
+                        const key = `${b.location.trim()}水`;
                         row[key] = (row[key] || 0) + (Number(b.amount) || 0);
                     });
                     return row;
@@ -132,40 +131,54 @@
             }, [powerBills, waterBills, filterStart, filterEnd]);
 
             const allLocations = useMemo(() => {
-                const locs = new Set([...powerBills, ...waterBills].map(b => b.location));
+                const locs = new Set([...powerBills, ...waterBills].map(b => b.location.trim()));
                 return Array.from(locs).sort();
             }, [powerBills, waterBills]);
 
             const handleAddOrEdit = async (e) => {
                 e.preventDefault();
-                const fd = new FormData(e.target);
-                const data = Object.fromEntries(fd.entries());
-                const collName = { 'electricity': 'powerBills', 'water': 'waterBills', 'tax': 'taxes', 'insurance': 'insurances' }[modalType];
-                
-                if (data.amount) data.amount = Number(data.amount);
-                if (data.usage) data.usage = Number(data.usage);
+                setIsSaving(true);
+                try {
+                    const fd = new FormData(e.target);
+                    const rawData = Object.fromEntries(fd.entries());
+                    const collName = { 'electricity': 'powerBills', 'water': 'waterBills', 'tax': 'taxes', 'insurance': 'insurances' }[modalType];
+                    
+                    // 數據類型清理
+                    const cleanData = { ...rawData };
+                    if (cleanData.amount) cleanData.amount = Number(cleanData.amount);
+                    if (cleanData.usage) cleanData.usage = Number(cleanData.usage);
 
-                if (editingItem) {
-                    const ref = window.FS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', collName, editingItem.id);
-                    await window.FS.updateDoc(ref, { ...data, updatedAt: window.FS.serverTimestamp() });
-                } else {
-                    await window.FS.addDoc(window.FS.collection(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', collName), {
-                        ...data, isPaid: false, status: data.status || '待繳', createdAt: window.FS.serverTimestamp()
-                    });
+                    if (editingItem && editingItem.id) {
+                        const ref = window.FS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', collName, editingItem.id);
+                        await window.FS.updateDoc(ref, { ...cleanData, updatedAt: window.FS.serverTimestamp() });
+                    } else {
+                        await window.FS.addDoc(window.FS.collection(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', collName), {
+                            ...cleanData, isPaid: false, status: cleanData.status || '待繳', createdAt: window.FS.serverTimestamp()
+                        });
+                    }
+                    setShowModal(false);
+                    setEditingItem(null);
+                } catch (error) {
+                    console.error("Save Error:", error);
+                    alert("儲存失敗：" + error.message);
+                } finally {
+                    setIsSaving(false);
                 }
-                setShowModal(false);
-                setEditingItem(null);
             };
 
             const toggleStatus = async (coll, id, current) => {
-                const ref = window.FS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', coll, id);
-                const next = coll === 'taxes' ? (current === '已繳' ? '待繳' : '已繳') : !current;
-                await window.FS.updateDoc(ref, coll === 'taxes' ? { status: next } : { isPaid: next });
+                try {
+                    const ref = window.FS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', coll, id);
+                    const next = coll === 'taxes' ? (current === '已繳' ? '待繳' : '已繳') : !current;
+                    await window.FS.updateDoc(ref, coll === 'taxes' ? { status: next } : { isPaid: next });
+                } catch (e) { alert("更新狀態失敗"); }
             };
 
             const deleteRecord = async (coll, id) => {
-                if (!confirm("確定要刪除這筆紀錄嗎？")) return;
-                await window.FS.deleteDoc(window.FS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', coll, id));
+                if (!confirm("確定要刪除這筆紀錄嗎？資料將永久移除。")) return;
+                try {
+                    await window.FS.deleteDoc(window.FS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', coll, id));
+                } catch (e) { alert("刪除失敗"); }
             };
 
             const openEdit = (type, item) => {
@@ -174,24 +187,24 @@
                 setShowModal(true);
             };
 
-            if (!user || loading) return <div className="h-screen flex items-center justify-center bg-white font-black text-slate-400 animate-pulse">蒙恩聽障烘焙坊 跨年度數據同步中...</div>;
+            if (!user || loading) return <div className="h-screen flex flex-col items-center justify-center bg-white"><div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full loading-spin mb-4"></div><p className="font-black text-slate-400">數據安全同步中...</p></div>;
 
             return (
                 <div className="flex min-h-screen">
                     {/* Sidebar */}
                     <aside className="w-72 bg-white border-r hidden lg:flex flex-col sticky top-0 h-screen z-20">
                         <div className="p-8">
-                            <div className="bg-indigo-600 text-white p-5 rounded-[2rem] shadow-xl shadow-indigo-100 transition-soft hover:scale-[1.02]">
-                                <h1 className="font-black text-lg tracking-tighter leading-tight">行政管理雲</h1>
-                                <p className="text-indigo-200 text-[9px] font-bold uppercase tracking-widest mt-1 italic">114-115 Multi-Year Edition</p>
+                            <div className="bg-indigo-600 text-white p-6 rounded-[2.5rem] shadow-xl shadow-indigo-100 transition-soft">
+                                <h1 className="font-black text-xl tracking-tighter leading-tight">行政管理雲</h1>
+                                <p className="text-indigo-200 text-[9px] font-bold uppercase tracking-widest mt-1">Multi-Year Edition</p>
                             </div>
                         </div>
                         <nav className="flex-1 px-6 space-y-1">
                             {[
-                                { id: 'dashboard', label: '年度數據分析器', icon: 'layout-dashboard' },
-                                { id: 'utilities', label: '水電電信登記', icon: 'zap' },
+                                { id: 'dashboard', label: '114-115 數據趨勢', icon: 'layout-dashboard' },
+                                { id: 'utilities', label: '水電電信費登記', icon: 'zap' },
                                 { id: 'taxes', label: '週期性規費管理', icon: 'receipt' },
-                                { id: 'insurance', label: '各類保險追蹤', icon: 'shield-check' }
+                                { id: 'insurance', label: '各類合約保險', icon: 'shield-check' }
                             ].map(item => (
                                 <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center space-x-4 px-8 py-5 rounded-[1.5rem] font-black text-sm transition-soft ${activeTab === item.id ? 'nav-active' : 'text-slate-400 hover:bg-slate-50'}`}>
                                     <Icon name={item.icon} className="w-5 h-5" />
@@ -199,7 +212,7 @@
                                 </button>
                             ))}
                         </nav>
-                        <div className="p-8 text-center opacity-30"><p className="text-[10px] font-black text-slate-800 uppercase">蒙恩聽障烘焙坊</p></div>
+                        <div className="p-8"><div className="bg-slate-900 rounded-[2rem] p-4 text-white text-center italic opacity-60 text-[10px] font-bold">蒙恩聽障烘焙坊</div></div>
                     </aside>
 
                     {/* Main Content */}
@@ -207,41 +220,24 @@
                         <header className="flex justify-between items-center mb-10">
                             <div>
                                 <h2 className="text-3xl font-black text-slate-800 tracking-tight italic uppercase">{activeTab}</h2>
-                                <p className="text-[10px] text-slate-400 font-bold tracking-widest mt-1 uppercase">蒙恩行政資訊整合平台 (114-115)</p>
+                                <p className="text-[10px] text-slate-400 font-bold tracking-widest mt-1 uppercase">114-115 年度行政管理入口</p>
                             </div>
-                            <div className="flex items-center space-x-3 text-xs font-black text-emerald-500 bg-emerald-50 px-5 py-2 rounded-full border border-emerald-100 shadow-sm font-bold">
-                                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>歷史資料已載入
+                            <div className="flex items-center space-x-3 text-xs font-black text-emerald-500 bg-emerald-50 px-5 py-2 rounded-full border border-emerald-100">
+                                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>115 REALTIME
                             </div>
                         </header>
 
                         {/* 1. Dashboard */}
                         {activeTab === 'dashboard' && (
                             <div className="space-y-10 animate-in fade-in duration-500">
-                                {/* Date Range Selector */}
                                 <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-wrap items-center gap-8">
-                                    <div className="flex items-center space-x-3 text-indigo-600 font-black">
-                                        <Icon name="calendar-range" className="w-5 h-5" />
-                                        <span className="text-sm uppercase tracking-[0.2em]">時間軸篩選器</span>
-                                    </div>
+                                    <div className="flex items-center space-x-3 text-indigo-600 font-black"><Icon name="calendar-range" className="w-5 h-5" /><span className="text-sm uppercase tracking-widest">時間軸篩選</span></div>
                                     <div className="flex items-center gap-4 bg-slate-50 p-2 rounded-2xl border border-slate-100 font-black">
-                                        <div className="flex flex-col px-4">
-                                            <span className="text-[9px] text-slate-400 uppercase">Start Period</span>
-                                            <select value={filterStart} onChange={e=>setFilterStart(e.target.value)} className="bg-transparent border-none text-xs font-black outline-none focus:text-indigo-600 cursor-pointer">
-                                                {PERIODS.map(p => <option key={p} value={p}>{p}</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="w-px h-8 bg-slate-200"></div>
-                                        <div className="flex flex-col px-4">
-                                            <span className="text-[9px] text-slate-400 uppercase">End Period</span>
-                                            <select value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} className="bg-transparent border-none text-xs font-black outline-none focus:text-indigo-600 cursor-pointer">
-                                                {PERIODS.map(p => <option key={p} value={p}>{p}</option>)}
-                                            </select>
-                                        </div>
+                                        <select value={filterStart} onChange={e=>setFilterStart(e.target.value)} className="bg-transparent border-none text-xs font-black outline-none focus:text-indigo-600 cursor-pointer">{PERIODS.map(p => <option key={p} value={p}>{p}</option>)}</select>
+                                        <span className="text-slate-300 font-black">~</span>
+                                        <select value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} className="bg-transparent border-none text-xs font-black outline-none focus:text-indigo-600 cursor-pointer">{PERIODS.map(p => <option key={p} value={p}>{p}</option>)}</select>
                                     </div>
-                                    <div className="ml-auto flex items-center bg-amber-50 px-4 py-2 rounded-xl border border-amber-100">
-                                        <Icon name="info" className="w-3.5 h-3.5 text-amber-500 mr-2" />
-                                        <p className="text-[10px] font-black text-amber-600 italic">正在分析 {filteredChartData.length} 個週期的運作趨勢</p>
-                                    </div>
+                                    <div className="ml-auto flex items-center bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100 text-[10px] font-black text-indigo-600 italic">分析範圍：{filteredChartData.length} 個統計週期</div>
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 font-black">
@@ -256,22 +252,21 @@
                                                     <Tooltip contentStyle={{borderRadius: '24px', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.1)'}} />
                                                     <Legend wrapperStyle={{paddingTop: '20px'}} />
                                                     {allLocations.map((loc, i) => (
-                                                        <Line key={loc} type="monotone" name={loc} dataKey={`${loc}電`} stroke={COLORS[i % COLORS.length]} strokeWidth={4} dot={{r: 4, strokeWidth: 3, fill: '#fff'}} activeDot={{r: 8}} connectNulls />
+                                                        <Line key={loc} type="monotone" name={loc} dataKey={`${loc}電`} stroke={COLORS[i % COLORS.length]} strokeWidth={4} dot={{r: 4, strokeWidth: 3, fill: '#fff'}} connectNulls />
                                                     ))}
                                                 </LineChart>
                                             </ResponsiveContainer>
                                         </div>
                                     </div>
-
                                     <div className="bg-white p-10 rounded-[3.5rem] shadow-sm border border-slate-100 transition-soft hover:shadow-lg">
-                                        <h4 className="font-black text-sm text-slate-400 mb-8 flex items-center uppercase tracking-widest"><Icon name="droplet" className="w-4 h-4 mr-3 text-blue-400 fill-blue-400" /> 各據點水費金額圖 (TWD)</h4>
+                                        <h4 className="font-black text-sm text-slate-400 mb-8 flex items-center uppercase tracking-widest"><Icon name="droplet" className="w-4 h-4 mr-3 text-blue-400 fill-blue-400" /> 各據點水費支出趨勢 (TWD)</h4>
                                         <div className="h-80 w-full font-bold">
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <AreaChart data={filteredChartData}>
                                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                                     <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} dy={10} />
                                                     <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
-                                                    <Tooltip contentStyle={{borderRadius: '24px', border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.1)'}} />
+                                                    <Tooltip contentStyle={{borderRadius: '24px', border: 'none'}} />
                                                     <Legend wrapperStyle={{paddingTop: '20px'}} />
                                                     {allLocations.map((loc, i) => (
                                                         <Area key={loc} type="monotone" name={loc} dataKey={`${loc}水`} stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.05} strokeWidth={3} connectNulls />
@@ -289,31 +284,31 @@
                             <div className="space-y-8 animate-in slide-in-from-bottom-4">
                                 <div className="flex space-x-6">
                                     <button onClick={() => { setModalType('electricity'); setEditingItem(null); setShowModal(true); }} className="flex-1 bg-indigo-600 text-white p-10 rounded-[3rem] shadow-xl transition-soft hover:-translate-y-1 flex items-center justify-between group">
-                                        <div><p className="text-[10px] font-black text-indigo-200 uppercase mb-1 tracking-widest">Power Tracking</p><h3 className="text-3xl font-black italic">登記電費與電度</h3></div>
+                                        <div><p className="text-[10px] font-black text-indigo-200 uppercase mb-1">ENERGY REGISTER</p><h3 className="text-3xl font-black italic">登記電費電度</h3></div>
                                         <Icon name="zap" className="w-12 h-12 opacity-30 group-hover:scale-125 transition-soft" />
                                     </button>
                                     <button onClick={() => { setModalType('water'); setEditingItem(null); setShowModal(true); }} className="flex-1 bg-blue-600 text-white p-10 rounded-[3rem] shadow-xl transition-soft hover:-translate-y-1 flex items-center justify-between group">
-                                        <div><p className="text-[10px] font-black text-blue-200 uppercase mb-1 tracking-widest">Water Tracking</p><h3 className="text-3xl font-black italic">登記水費金額</h3></div>
+                                        <div><p className="text-[10px] font-black text-blue-200 uppercase mb-1">WATER REGISTER</p><h3 className="text-3xl font-black italic">登記水費金額</h3></div>
                                         <Icon name="droplet" className="w-12 h-12 opacity-30 group-hover:scale-125 transition-soft" />
                                     </button>
                                 </div>
                                 <div className="bg-white rounded-[3rem] border border-slate-100 overflow-hidden shadow-sm">
-                                    <table className="w-full text-left font-bold">
+                                    <table className="w-full text-left font-black">
                                         <thead className="bg-slate-50 text-[10px] text-slate-400 font-black uppercase tracking-widest border-b">
-                                            <tr><th className="px-10 py-6 uppercase font-black">類型</th><th className="px-10 py-6">據點</th><th className="px-10 py-6">期別</th><th className="px-10 py-6 text-center font-black">度數</th><th className="px-10 py-6 text-center text-lg font-black">金額</th><th className="px-10 py-6"></th></tr>
+                                            <tr><th className="px-10 py-8">類別</th><th className="px-10 py-8">據點</th><th className="px-10 py-8">期別</th><th className="px-10 py-8 text-center">度數</th><th className="px-10 py-8 text-center">金額</th><th className="px-10 py-8 text-right pr-20">操作</th></tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-50 font-black">
                                             {[...powerBills, ...waterBills].sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map(p => (
                                                 <tr key={p.id} className="text-sm hover:bg-slate-50 transition-soft group">
-                                                    <td className="px-10 py-8"><span className={`px-3 py-1 rounded-xl text-[10px] uppercase font-black border tracking-tighter ${p.usage ? 'bg-yellow-50 text-yellow-600 border-yellow-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>{p.usage ? '電費' : '水費'}</span></td>
+                                                    <td className="px-10 py-8"><span className={`px-4 py-1.5 rounded-xl text-[10px] uppercase font-black border tracking-widest ${p.usage ? 'bg-yellow-50 text-yellow-600 border-yellow-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>{p.usage ? '電費' : '水費'}</span></td>
                                                     <td className="px-10 py-8 text-slate-800 font-black">{p.location}</td>
                                                     <td className="px-10 py-8 text-slate-400">{p.period}</td>
                                                     <td className="px-10 py-8 text-center text-indigo-500 font-black">{p.usage || '-'}</td>
-                                                    <td className="px-10 py-8 text-center font-black text-slate-800 text-lg tracking-tighter">${p.amount?.toLocaleString()}</td>
-                                                    <td className="px-10 py-8 text-right">
-                                                        <div className="flex space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                            <button onClick={() => openEdit(p.usage ? 'electricity' : 'water', p)} className="p-2 text-slate-300 hover:text-indigo-600 transition-soft"><Icon name="edit-3" className="w-4 h-4" /></button>
-                                                            <button onClick={() => deleteRecord(p.usage ? 'powerBills' : 'waterBills', p.id)} className="p-2 text-slate-300 hover:text-rose-500 transition-soft"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                                    <td className="px-10 py-8 text-center font-black text-slate-800 text-lg">${p.amount?.toLocaleString()}</td>
+                                                    <td className="px-10 py-8 text-right pr-20">
+                                                        <div className="flex justify-end space-x-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <button onClick={() => openEdit(p.usage ? 'electricity' : 'water', p)} className="p-2 text-slate-400 hover:text-indigo-600 transition-soft"><Icon name="edit-3" className="w-5 h-5" /></button>
+                                                            <button onClick={() => deleteRecord(p.usage ? 'powerBills' : 'waterBills', p.id)} className="p-2 text-slate-400 hover:text-rose-500 transition-soft"><Icon name="trash-2" className="w-5 h-5" /></button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -327,35 +322,34 @@
                         {/* 3. Taxes */}
                         {activeTab === 'taxes' && (
                             <div className="space-y-10 animate-in slide-in-from-bottom-4">
-                                <div className="flex justify-between items-center">
+                                <div className="flex justify-between items-center px-4">
                                     <div className="flex space-x-2 bg-white p-2 rounded-[2rem] shadow-sm border border-slate-100 font-black">
                                         {['全部', '每月', '2個月', '每季', '年度'].map(t => (
-                                            <button key={t} onClick={() => setTaxSubTab(t)} className={`px-8 py-3 rounded-2xl text-xs transition-soft ${taxSubTab === t ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-400 hover:bg-slate-50 font-black'}`}>
+                                            <button key={t} onClick={() => setTaxSubTab(t)} className={`px-8 py-3 rounded-2xl text-xs transition-soft ${taxSubTab === t ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-400 hover:bg-slate-50'}`}>
                                                 {t}
                                             </button>
                                         ))}
                                     </div>
-                                    <button onClick={() => { setModalType('tax'); setEditingItem(null); setShowModal(true); }} className="bg-slate-900 text-white px-8 py-4 rounded-[1.5rem] font-black text-sm shadow-xl flex items-center hover:bg-black transition-soft">
-                                        <Icon name="plus" className="w-4 h-4 mr-2" /> 新增其他規費
+                                    <button onClick={() => { setModalType('tax'); setEditingItem(null); setShowModal(true); }} className="bg-slate-900 text-white px-10 py-4 rounded-[1.5rem] font-black text-sm shadow-xl flex items-center hover:bg-black transition-soft">
+                                        <Icon name="plus" className="w-4 h-4 mr-2" /> 新增自定義規範
                                     </button>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
                                     {taxes.filter(t => taxSubTab === '全部' || (t.period && t.period.includes(taxSubTab))).map(t => (
-                                        <div key={t.id} className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm transition-soft hover:scale-[1.02] hover:shadow-2xl relative group flex flex-col justify-between">
-                                            <div className="absolute top-6 right-6 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => openEdit('tax', t)} className="p-1.5 text-slate-300 hover:text-indigo-600"><Icon name="edit-3" className="w-4 h-4" /></button>
-                                                <button onClick={() => deleteRecord('taxes', t.id)} className="p-1.5 text-slate-300 hover:text-rose-500"><Icon name="x" className="w-4 h-4" /></button>
+                                        <div key={t.id} className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm transition-soft hover:scale-[1.03] hover:shadow-2xl relative group flex flex-col justify-between">
+                                            <div className="absolute top-8 right-8 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button onClick={() => openEdit('tax', t)} className="p-2 text-slate-300 hover:text-indigo-600 transition-soft"><Icon name="edit-3" className="w-4 h-4" /></button>
+                                                <button onClick={() => deleteRecord('taxes', t.id)} className="p-2 text-slate-300 hover:text-rose-500 transition-soft"><Icon name="x" className="w-4 h-4" /></button>
                                             </div>
                                             <div>
-                                                <div className="flex justify-between items-start mb-6">
-                                                    <span className={`text-[10px] font-black px-4 py-1.5 rounded-xl border tracking-widest ${t.status === '已繳' ? 'bg-emerald-50 text-emerald-500 border-emerald-100 font-black' : 'bg-amber-50 text-amber-500 border-amber-100 font-black'}`}>{t.status}</span>
-                                                    <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest italic">{t.period}</span>
+                                                <div className="flex justify-between items-start mb-8">
+                                                    <span className={`text-[10px] font-black px-4 py-1.5 rounded-xl border tracking-widest ${t.status === '已繳' ? 'bg-emerald-50 text-emerald-500 border-emerald-100' : 'bg-amber-50 text-amber-500 border-amber-100'}`}>{t.status}</span>
                                                 </div>
-                                                <h4 className="font-black text-slate-800 text-base mb-2 leading-tight tracking-tighter">{t.name}</h4>
-                                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-8 italic">負責: {t.payer}</p>
+                                                <h4 className="font-black text-slate-800 text-lg mb-2 leading-tight tracking-tighter">{t.name}</h4>
+                                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-10 italic">週期: {t.period} | {t.payer}</p>
                                             </div>
-                                            <button onClick={() => toggleStatus('taxes', t.id, t.status)} className={`w-full py-4 rounded-[1.5rem] text-[10px] font-black transition-soft uppercase tracking-widest ${t.status === '已繳' ? 'bg-slate-50 text-slate-300' : 'bg-slate-900 text-white shadow-lg hover:bg-black'}`}>
+                                            <button onClick={() => toggleStatus('taxes', t.id, t.status)} className={`w-full py-5 rounded-[1.5rem] text-[10px] font-black transition-soft uppercase tracking-widest shadow-sm ${t.status === '已繳' ? 'bg-slate-50 text-slate-300' : 'bg-slate-900 text-white shadow-lg hover:bg-black'}`}>
                                                 {t.status === '已繳' ? '恢復為待處理' : '本期已繳費完成'}
                                             </button>
                                         </div>
@@ -368,26 +362,26 @@
                         {activeTab === 'insurance' && (
                             <div className="space-y-10 animate-in slide-in-from-bottom-4">
                                 <div className="flex justify-between items-center px-4">
-                                    <h3 className="font-black text-2xl text-slate-800 tracking-tight italic uppercase tracking-[0.1em]">Active Insurance Tracking</h3>
+                                    <h3 className="font-black text-2xl text-slate-800 tracking-tight italic underline decoration-indigo-500 underline-offset-8">各類保險監控</h3>
                                     <button onClick={() => { setModalType('insurance'); setEditingItem(null); setShowModal(true); }} className="bg-indigo-600 text-white px-10 py-4 rounded-[1.5rem] font-black text-sm shadow-2xl transition-soft hover:bg-indigo-700 flex items-center">
                                         <Icon name="plus" className="w-4 h-4 mr-3" /> 新增合約標的
                                     </button>
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
                                     {insurances.map(i => (
-                                        <div key={i.id} className="bg-white p-10 rounded-[3.5rem] border border-slate-100 shadow-sm transition-soft hover:shadow-2xl relative group overflow-hidden font-black">
-                                            <div className="absolute top-8 right-8 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => openEdit('insurance', i)} className="p-2 text-slate-300 hover:text-indigo-600"><Icon name="edit-3" className="w-4 h-4" /></button>
-                                                <button onClick={() => deleteRecord('insurances', i.id)} className="p-2 text-slate-300 hover:text-rose-500"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                        <div key={i.id} className="bg-white p-12 rounded-[4rem] border border-slate-100 shadow-sm transition-soft hover:shadow-2xl relative group overflow-hidden border-b-8 border-b-indigo-500/10">
+                                            <div className="absolute top-10 right-10 flex space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button onClick={() => openEdit('insurance', i)} className="p-2 text-slate-300 hover:text-indigo-600"><Icon name="edit-3" className="w-5 h-5" /></button>
+                                                <button onClick={() => deleteRecord('insurances', i.id)} className="p-2 text-slate-300 hover:text-rose-500"><Icon name="trash-2" className="w-5 h-5" /></button>
                                             </div>
-                                            <div className="flex justify-between mb-8">
-                                                <span className="bg-slate-100 px-4 py-2 rounded-2xl text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{i.type || '一般'}</span>
+                                            <div className="flex justify-between mb-10">
+                                                <span className="bg-slate-100 px-4 py-2 rounded-2xl text-[10px] font-black text-slate-400 uppercase tracking-widest">{i.type || '一般合約'}</span>
                                             </div>
-                                            <h4 className="font-black text-slate-800 text-xl mb-2 tracking-tighter leading-tight italic">{i.name}</h4>
-                                            <p className="text-xs text-slate-400 font-bold mb-10 italic leading-relaxed tracking-wider opacity-60">{i.provider}</p>
-                                            <div className="bg-slate-50 p-8 rounded-[2.5rem] text-center border border-slate-100/50 group-hover:bg-indigo-50/50 transition-soft">
-                                                <p className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest italic opacity-50">合約到期日</p>
-                                                <p className="text-lg font-black text-slate-700 tracking-tighter italic underline decoration-amber-400 underline-offset-4 font-black">{i.end}</p>
+                                            <h4 className="font-black text-slate-800 text-xl mb-3 tracking-tighter leading-tight">{i.name}</h4>
+                                            <p className="text-xs text-slate-400 font-bold mb-12 italic opacity-80">{i.provider}</p>
+                                            <div className="bg-slate-50/50 p-8 rounded-[2.5rem] text-center border border-slate-100/50">
+                                                <p className="text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest font-black italic">EXPIRY DATE</p>
+                                                <p className="text-lg font-black text-slate-700 tracking-tighter italic underline decoration-amber-400 underline-offset-4">{i.end}</p>
                                             </div>
                                         </div>
                                     ))}
@@ -399,56 +393,57 @@
                     {/* Modal Window */}
                     {showModal && (
                         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-50 flex items-center justify-center p-6 animate-in fade-in duration-300">
-                            <div className="bg-white rounded-[3.5rem] w-full max-w-md p-12 shadow-2xl scale-100 border border-white/20 font-black">
+                            <div className="bg-white rounded-[3.5rem] w-full max-w-md p-12 shadow-2xl scale-100 border border-white/20">
                                 <div className="flex justify-between items-center mb-10">
                                     <h3 className="text-2xl font-black text-slate-800 italic underline decoration-indigo-600 underline-offset-8">
-                                        {editingItem ? '編輯雲端紀錄' : '系統數據錄入'}
+                                        {editingItem ? '編輯紀錄' : '系統錄入'}
                                     </h3>
-                                    <button onClick={() => { setShowModal(false); setEditingItem(null); }} className="bg-slate-50 p-3 rounded-full text-slate-400 hover:text-rose-500 transition-soft"><Icon name="x" className="w-5 h-5" /></button>
+                                    <button onClick={() => { setShowModal(false); setEditingItem(null); }} className="bg-slate-50 p-3 rounded-full text-slate-400 hover:text-rose-500 transition-soft font-black"><Icon name="x" className="w-5 h-5" /></button>
                                 </div>
                                 <form onSubmit={handleAddOrEdit} className="space-y-6">
                                     {(modalType === 'electricity' || modalType === 'water') && (
                                         <>
-                                            <div className="space-y-1 font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black">據點選擇</label>
+                                            <div className="space-y-1 font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">據點選擇</label>
                                                 <select name="location" defaultValue={editingItem?.location} className="w-full bg-slate-50 p-5 rounded-[1.5rem] text-sm font-black border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner">
                                                     <option>北屯總部</option><option>崇德門市</option><option>生產中心</option><option>物流中心</option><option>大雅宿舍</option>
                                                 </select>
                                             </div>
                                             <div className="grid grid-cols-2 gap-6">
-                                                <div className="space-y-1 font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black">選擇期別</label>
-                                                    <select name="period" defaultValue={editingItem?.period} className="w-full bg-slate-50 p-5 rounded-[1.5rem] text-sm font-black border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner">
+                                                <div className="space-y-1 font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black">選擇期別</label>
+                                                    <select name="period" defaultValue={editingItem?.period} className="w-full bg-slate-50 p-5 rounded-[1.5rem] text-sm font-black border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner font-black shadow-inner">
                                                         {PERIODS.map(p => <option key={p} value={p}>{p}</option>)}
                                                     </select>
                                                 </div>
-                                                <div className="space-y-1 font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black italic">{modalType === 'electricity' ? '電度(度)' : '度數(選填)'}</label><input name={modalType === 'electricity' ? 'usage' : 'memo'} type={modalType === 'electricity' ? 'number' : 'text'} defaultValue={editingItem?.usage || editingItem?.memo} placeholder="0" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner font-black" required={modalType === 'electricity'} /></div>
+                                                <div className="space-y-1 font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black italic">{modalType === 'electricity' ? '電度(度)' : '度數(選填)'}</label><input name={modalType === 'electricity' ? 'usage' : 'memo'} type={modalType === 'electricity' ? 'number' : 'text'} defaultValue={editingItem?.usage || editingItem?.memo} placeholder="0" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner font-black" required={modalType === 'electricity'} /></div>
                                             </div>
-                                            <div className="space-y-1 font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black">繳費總額 (TWD)</label><input name="amount" type="number" defaultValue={editingItem?.amount} placeholder="0" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner text-indigo-600 font-black" required /></div>
+                                            <div className="space-y-1 font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black">繳費總額 (TWD)</label><input name="amount" type="number" defaultValue={editingItem?.amount} placeholder="0" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-inner text-indigo-600 font-black font-black shadow-inner" required /></div>
                                         </>
                                     )}
                                     {modalType === 'tax' && (
                                         <>
-                                            <div className="space-y-1 font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black">規範項目</label><input name="name" defaultValue={editingItem?.name} placeholder="如：全民健保費" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none outline-none shadow-inner font-black" required /></div>
-                                            <div className="grid grid-cols-2 gap-6 font-black font-black">
-                                                <div className="space-y-1 font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black">週期分類</label>
-                                                    <select name="period" defaultValue={editingItem?.period} className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none">
+                                            <div className="space-y-1 font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">規範項目</label><input name="name" defaultValue={editingItem?.name} placeholder="項目名稱..." className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none outline-none shadow-inner font-black" required /></div>
+                                            <div className="grid grid-cols-2 gap-6 font-black font-black font-black">
+                                                <div className="space-y-1 font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">週期分類</label>
+                                                    <select name="period" defaultValue={editingItem?.period} className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black shadow-inner font-black shadow-inner">
                                                         <option>每月</option><option>2個月</option><option>每季</option><option>年度</option>
                                                     </select>
                                                 </div>
-                                                <div className="space-y-1 font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black">負責人</label><input name="payer" defaultValue={editingItem?.payer} placeholder="潘哥" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black" required /></div>
+                                                <div className="space-y-1 font-black font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">負責人</label><input name="payer" defaultValue={editingItem?.payer} placeholder="潘哥" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black font-black shadow-inner font-black" required /></div>
                                             </div>
                                         </>
                                     )}
                                     {modalType === 'insurance' && (
                                         <>
-                                            <div className="space-y-1 font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black">標的標示 (車牌/店號)</label><input name="name" defaultValue={editingItem?.name} placeholder="車號或標的名稱" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black" required /></div>
-                                            <div className="grid grid-cols-2 gap-6 font-black font-black">
-                                                <div className="space-y-1 font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">保險公司</label><input name="provider" defaultValue={editingItem?.provider} placeholder="如：新光產物" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black" required /></div>
-                                                <div className="space-y-1 font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">到期日</label><input name="end" defaultValue={editingItem?.end} placeholder="115.12.31" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black" required /></div>
+                                            <div className="space-y-1 font-black font-black font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">標的標示 (車牌/門店)</label><input name="name" defaultValue={editingItem?.name} placeholder="車號或標的名稱" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black font-black shadow-inner font-black shadow-inner font-black shadow-inner" required /></div>
+                                            <div className="grid grid-cols-2 gap-6 font-black font-black font-black font-black font-black">
+                                                <div className="space-y-1 font-black font-black font-black font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black font-black">保險公司</label><input name="provider" defaultValue={editingItem?.provider} placeholder="投保公司名稱" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black font-black shadow-inner font-black font-black shadow-inner font-black" required /></div>
+                                                <div className="space-y-1 font-black font-black font-black font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black font-black font-black font-black">到期日</label><input name="end" defaultValue={editingItem?.end} placeholder="115.12.31" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black font-black shadow-inner font-black font-black shadow-inner font-black shadow-inner font-black shadow-inner font-black" required /></div>
                                             </div>
-                                            <div className="space-y-1 font-black font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black">險種類別</label><input name="type" defaultValue={editingItem?.type} placeholder="車險/火險/責任險" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black" required /></div>
+                                            <div className="space-y-1 font-black font-black font-black font-black font-black font-black font-black font-black font-black font-black font-black font-black"><label className="text-[10px] text-slate-400 uppercase ml-2 tracking-widest font-black font-black font-black font-black font-black font-black">險種類別</label><input name="type" defaultValue={editingItem?.type} placeholder="車險/火險/責任險" className="w-full bg-slate-50 p-6 rounded-[1.5rem] text-sm font-black border-none shadow-inner outline-none font-black font-black shadow-inner font-black font-black shadow-inner font-black shadow-inner font-black shadow-inner font-black shadow-inner font-black shadow-inner font-black shadow-inner" required /></div>
                                         </>
                                     )}
-                                    <button type="submit" className="w-full py-7 bg-indigo-600 text-white rounded-[2rem] font-black shadow-2xl shadow-indigo-200 hover:bg-indigo-700 transition-soft mt-8 tracking-[0.3em] uppercase">
+                                    <button type="submit" disabled={isSaving} className={`w-full py-7 bg-indigo-600 text-white rounded-[2rem] font-black shadow-2xl shadow-indigo-200 hover:bg-indigo-700 transition-soft mt-8 tracking-[0.3em] uppercase flex items-center justify-center ${isSaving ? 'opacity-70' : ''}`}>
+                                        {isSaving ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full loading-spin mr-3"></div> : null}
                                         {editingItem ? '確認儲存更動' : '同步至雲端系統'}
                                     </button>
                                 </form>
