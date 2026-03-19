@@ -39,6 +39,12 @@
         .mobile-nav-shadow {
             box-shadow: 0 -4px 10px -1px rgba(0, 0, 0, 0.05);
         }
+        
+        /* 圖片中卡片顏色的精確還原 */
+        .card-pink { background-color: #FFF1F2; border-color: #FFE4E6; }
+        .card-yellow { background-color: #FFFBEB; border-color: #FEF3C7; }
+        .card-blue { background-color: #EFF6FF; border-color: #DBEAFE; }
+        .card-green { background-color: #F0FDF4; border-color: #DCFCE7; }
     </style>
 </head>
 <body>
@@ -160,37 +166,40 @@
                 return () => { unsubL(); unsubP(); unsubW(); unsubI(); unsubT(); };
             }, [user]);
 
-            // 圖表與概覽數據運算
+            // 圖表數據運算
             const chartData = useMemo(() => {
                 const sIdx = PERIODS.indexOf(filterStart);
                 const eIdx = PERIODS.indexOf(filterEnd);
-                const range = PERIODS.slice(sIdx, eIdx + 1);
+                const range = PERIODS.slice(Math.max(0, sIdx), Math.max(0, eIdx + 1));
+                
                 return range.map(p => {
                     const row = { period: p };
+                    locations.forEach(loc => {
+                        row[`${loc.name}電`] = 0;
+                        row[`${loc.name}水`] = 0;
+                    });
                     powerBills.filter(b => b.period === p).forEach(b => { 
-                        const key = `${b.location?.trim()}電`;
-                        row[key] = (row[key] || 0) + (Number(b.usage) || 0); 
+                        if (b.location) row[`${b.location.trim()}電`] = (row[`${b.location.trim()}電`] || 0) + (Number(b.usage) || 0); 
                     });
                     waterBills.filter(b => b.period === p).forEach(b => { 
-                        const key = `${b.location?.trim()}水`;
-                        row[key] = (row[key] || 0) + (Number(b.amount) || 0); 
+                        if (b.location) row[`${b.location.trim()}水`] = (row[`${b.location.trim()}水`] || 0) + (Number(b.amount) || 0); 
                     });
                     return row;
                 });
-            }, [powerBills, waterBills, filterStart, filterEnd]);
+            }, [powerBills, waterBills, locations, filterStart, filterEnd]);
 
-            // 區間統計數據
+            // 實例化四大統計卡片數據
             const dashboardStats = useMemo(() => {
-                let totalUsage = 0;
-                let totalAmount = 0;
-                chartData.forEach(p => {
-                    Object.keys(p).forEach(key => {
-                        if (key.endsWith('電')) totalUsage += p[key];
-                        if (key.endsWith('水')) totalAmount += p[key];
-                    });
-                });
-                return { totalUsage, totalAmount };
-            }, [chartData]);
+                const pendingUtilityTotal = [...powerBills, ...waterBills]
+                    .filter(b => b.isPaid === false)
+                    .reduce((sum, b) => sum + (Number(b.amount) || 0), 0);
+                
+                const pendingTaxCount = taxes.filter(t => t.status !== '已繳').length;
+                const insuranceAlerts = insurances.filter(i => i.status !== '有效').length;
+                const totalSystemData = powerBills.length + waterBills.length + insurances.length + taxes.length;
+
+                return { pendingUtilityTotal, pendingTaxCount, insuranceAlerts, totalSystemData };
+            }, [powerBills, waterBills, taxes, insurances]);
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
@@ -210,10 +219,7 @@
                         await window.FS_METHODS.updateDoc(ref, { ...cleanData, updatedAt: window.FS_METHODS.serverTimestamp() });
                     } else {
                         await window.FS_METHODS.addDoc(window.FS_METHODS.collection(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', collName), {
-                            ...cleanData, 
-                            isPaid: false, 
-                            status: cleanData.status || (modalType === 'tax' ? '待繳' : '處理中'), 
-                            createdAt: window.FS_METHODS.serverTimestamp()
+                            ...cleanData, isPaid: false, status: cleanData.status || (modalType === 'tax' ? '待繳' : '處理中'), createdAt: window.FS_METHODS.serverTimestamp()
                         });
                     }
                     setShowModal(false); setEditingItem(null);
@@ -225,7 +231,7 @@
                 try {
                     const docRef = window.FS_METHODS.doc(window.FB_DB, 'artifacts', window.APP_ID, 'public', 'data', coll, id);
                     await window.FS_METHODS.deleteDoc(docRef);
-                } catch (err) { alert("刪除失敗，請檢查權限設定。"); }
+                } catch (err) { alert("刪除失敗。"); }
             };
 
             const toggleStatus = async (coll, id, current, field = 'isPaid') => {
@@ -272,11 +278,10 @@
                         ))}
                     </nav>
 
-                    {/* Main Content */}
                     <main className="flex-1 p-6 md:p-12 pb-24 lg:pb-12 overflow-y-auto">
                         <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
                             <div>
-                                <h2 className="text-3xl font-black text-slate-800 tracking-tight italic uppercase">{activeTab}</h2>
+                                <h2 className="text-3xl font-black text-slate-800 tracking-tight italic uppercase">{activeTab === 'dashboard' ? 'DASHBOARD' : activeTab}</h2>
                                 <p className="text-xs text-slate-400 font-bold tracking-widest mt-1 uppercase italic">Administrative Data Overview</p>
                             </div>
                             <div className="flex items-center space-x-3 bg-emerald-50 text-emerald-600 px-5 py-2 rounded-full border border-emerald-100 text-[10px] font-black">
@@ -286,40 +291,89 @@
 
                         {/* 1. Dashboard 儀表板 */}
                         {activeTab === 'dashboard' && (
-                            <div className="space-y-8 animate-in fade-in duration-500">
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">區間累計電度</p>
-                                        <h3 className="text-3xl font-black text-indigo-600 italic tracking-tighter">{dashboardStats.totalUsage.toLocaleString()} <span className="text-xs not-italic text-slate-400 ml-1">kWh</span></h3>
+                            <div className="space-y-10 animate-in fade-in duration-500">
+                                {/* 第一排：四大統計卡片 (還原圖片視覺) */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                                    <div className="card-pink p-8 rounded-[2.5rem] border shadow-sm relative overflow-hidden group">
+                                        <Icon name="dollar-sign" className="absolute right-6 top-6 w-8 h-8 text-rose-300 opacity-50 group-hover:scale-110 transition-soft" />
+                                        <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-4">水電待繳總額</p>
+                                        <h3 className="text-3xl font-black text-rose-600 italic tracking-tighter">${dashboardStats.pendingUtilityTotal.toLocaleString()}</h3>
                                     </div>
-                                    <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">區間累計水費</p>
-                                        <h3 className="text-3xl font-black text-emerald-500 italic tracking-tighter">${dashboardStats.totalAmount.toLocaleString()} <span className="text-xs not-italic text-slate-400 ml-1">TWD</span></h3>
+                                    <div className="card-yellow p-8 rounded-[2.5rem] border shadow-sm relative overflow-hidden group">
+                                        <Icon name="receipt" className="absolute right-6 top-6 w-8 h-8 text-amber-300 opacity-50 group-hover:scale-110 transition-soft" />
+                                        <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-4">規費待繳筆數</p>
+                                        <h3 className="text-3xl font-black text-amber-600 italic tracking-tighter">{dashboardStats.pendingTaxCount} <span className="text-sm not-italic">筆</span></h3>
                                     </div>
-                                    <div className="glass-card p-8 rounded-[2.5rem] border border-indigo-50 flex flex-col justify-center gap-4">
-                                        <div className="flex items-center space-x-2 text-indigo-600 font-black"><Icon name="calendar-range" className="w-4 h-4" /><span className="text-[10px] uppercase tracking-widest">分析週期篩選</span></div>
-                                        <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-100 shadow-inner text-xs font-black">
-                                            <select value={filterStart} onChange={e=>setFilterStart(e.target.value)} className="bg-transparent outline-none cursor-pointer">{PERIODS.map(p => <option key={p} value={p}>{p}</option>)}</select>
-                                            <span className="text-slate-300">~</span>
-                                            <select value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} className="bg-transparent outline-none cursor-pointer">{PERIODS.map(p => <option key={p} value={p}>{p}</option>)}</select>
-                                        </div>
+                                    <div className="card-blue p-8 rounded-[2.5rem] border shadow-sm relative overflow-hidden group">
+                                        <Icon name="shield-alert" className="absolute right-6 top-6 w-8 h-8 text-indigo-300 opacity-50 group-hover:scale-110 transition-soft" />
+                                        <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-4">保險合約警示</p>
+                                        <h3 className="text-3xl font-black text-indigo-600 italic tracking-tighter">{dashboardStats.insuranceAlerts} <span className="text-sm not-italic">件</span></h3>
+                                    </div>
+                                    <div className="card-green p-8 rounded-[2.5rem] border shadow-sm relative overflow-hidden group">
+                                        <Icon name="database" className="absolute right-6 top-6 w-8 h-8 text-emerald-300 opacity-50 group-hover:scale-110 transition-soft" />
+                                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-4">系統總數據量</p>
+                                        <h3 className="text-3xl font-black text-emerald-600 italic tracking-tighter">{dashboardStats.totalSystemData} <span className="text-sm not-italic">條</span></h3>
                                     </div>
                                 </div>
-                                
+
+                                {/* 第二排：分析週期篩選 */}
+                                <div className="glass-card p-6 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-wrap items-center gap-6">
+                                    <div className="flex items-center space-x-2 text-indigo-600 font-black"><Icon name="calendar-range" className="w-5 h-5" /><span className="text-xs uppercase tracking-widest">分析週期篩選</span></div>
+                                    <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-slate-100 shadow-sm font-black text-xs">
+                                        <select value={filterStart} onChange={e=>setFilterStart(e.target.value)} className="bg-transparent outline-none cursor-pointer">{PERIODS.map(p => <option key={p} value={p}>{p}</option>)}</select>
+                                        <span className="text-slate-300 font-black">~</span>
+                                        <select value={filterEnd} onChange={e=>setFilterEnd(e.target.value)} className="bg-transparent outline-none cursor-pointer">{PERIODS.map(p => <option key={p} value={p}>{p}</option>)}</select>
+                                    </div>
+                                </div>
+
+                                {/* 第三排：圖表數據 */}
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                     <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm transition-soft hover:shadow-xl">
-                                        <h4 className="font-black text-sm text-slate-400 mb-8 flex items-center uppercase tracking-widest"><Icon name="zap" className="w-4 h-4 mr-2 text-yellow-500 fill-yellow-500" /> 電度量趨勢動態</h4>
-                                        <div className="h-72"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="period" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} dy={10} /><YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} /><Tooltip contentStyle={{borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)'}} /><Legend wrapperStyle={{paddingTop: '20px'}} />{locations.map((loc, i) => (<Line key={loc.id} type="monotone" name={loc.name} dataKey={`${loc.name}電`} stroke={COLORS[i % COLORS.length]} strokeWidth={4} dot={{r: 4, strokeWidth: 2, fill: '#fff'}} connectNulls />))}</LineChart></ResponsiveContainer></div>
+                                        <h4 className="font-black text-sm text-slate-400 mb-8 flex items-center uppercase tracking-widest"><Icon name="zap" className="w-4 h-4 mr-2 text-yellow-500 fill-yellow-500" /> 電度量趨勢動態 (kWh)</h4>
+                                        <div className="h-72">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <LineChart data={chartData}>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                    <XAxis dataKey="period" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} dy={10} />
+                                                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
+                                                    <Tooltip contentStyle={{borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)'}} />
+                                                    <Legend wrapperStyle={{paddingTop: '20px'}} />
+                                                    {locations.map((loc, i) => (
+                                                        <Line key={loc.id} type="monotone" name={loc.name} dataKey={`${loc.name}電`} stroke={COLORS[i % COLORS.length]} strokeWidth={4} dot={{r: 4, strokeWidth: 2, fill: '#fff'}} connectNulls />
+                                                    ))}
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        </div>
                                     </div>
-                                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm transition-soft hover:shadow-xl">
-                                        <h4 className="font-black text-sm text-slate-400 mb-8 flex items-center uppercase tracking-widest"><Icon name="droplet" className="w-4 h-4 mr-2 text-blue-500 fill-blue-500" /> 水費支出動態</h4>
-                                        <div className="h-72"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" /><XAxis dataKey="period" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} dy={10} /><YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} /><Tooltip /><Legend wrapperStyle={{paddingTop: '20px'}} />{locations.map((loc, i) => (<Area key={loc.id} type="monotone" name={loc.name} dataKey={`${loc.name}水`} stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.05} strokeWidth={3} connectNulls />))}</AreaChart></ResponsiveContainer></div>
+
+                                    {/* 實作圖片中的「近期待繳規費」區塊 */}
+                                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm transition-soft hover:shadow-xl flex flex-col">
+                                        <h4 className="font-black text-sm text-slate-400 mb-8 flex items-center uppercase tracking-widest"><Icon name="receipt" className="w-4 h-4 mr-2 text-indigo-500" /> 近期待繳規費</h4>
+                                        <div className="flex-1 space-y-4 overflow-y-auto max-h-[300px] pr-2 custom-scrollbar">
+                                            {taxes.filter(t => t.status !== '已繳').length === 0 ? (
+                                                <p className="text-center text-slate-300 font-black italic mt-10">目前無待繳規費</p>
+                                            ) : (
+                                                taxes.filter(t => t.status !== '已繳').slice(0, 5).map(t => (
+                                                    <div key={t.id} className="bg-slate-50 p-6 rounded-[2rem] border border-transparent hover:border-indigo-100 transition-soft flex items-center justify-between group">
+                                                        <div className="flex items-center">
+                                                            <div className="w-1.5 h-12 bg-indigo-500 rounded-full mr-6"></div>
+                                                            <div>
+                                                                <span className="text-[9px] font-black bg-white px-2 py-0.5 rounded-lg border text-amber-500 border-amber-100 mb-1 inline-block uppercase tracking-tighter">{t.period}</span>
+                                                                <h5 className="font-black text-slate-800 text-lg leading-none">{t.name}</h5>
+                                                                <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">負責人：{t.payer}</p>
+                                                            </div>
+                                                        </div>
+                                                        <button onClick={() => toggleStatus('taxes', t.id, t.status, 'status')} className="bg-indigo-600 text-white px-5 py-2 rounded-xl text-[10px] font-black shadow-lg shadow-indigo-100 hover:bg-black transition-soft">確認繳費</button>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        {/* 2. Utilities 水電水費 */}
+                        {/* 2. Utilities 水電登記 */}
                         {activeTab === 'utilities' && (
                             <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
                                 <div className="flex flex-col sm:flex-row gap-4">
@@ -359,7 +413,7 @@
                                             </div>
                                             <h4 className="font-black text-slate-800 text-lg mb-2 leading-tight tracking-tight">{t.name}</h4>
                                             <p className="text-[10px] text-slate-400 font-bold mb-10 italic">週期: {t.period} | 負責人: {t.payer}</p>
-                                            <button onClick={() => toggleStatus(t._coll, t.id, t.status, 'status')} className={`w-full py-5 rounded-[1.5rem] text-[10px] font-black transition-soft uppercase tracking-widest ${t.status === '已繳' ? 'bg-slate-50 text-slate-300' : 'bg-slate-900 text-white shadow-lg'}`}>
+                                            <button onClick={() => toggleStatus(t._coll, t.id, t.status, 'status')} className={`w-full py-5 rounded-[1.5rem] text-[10px] font-black transition-soft uppercase tracking-widest ${t.status === '已繳' ? 'bg-slate-50 text-slate-300' : 'bg-slate-900 text-white shadow-lg shadow-indigo-100 hover:bg-black'}`}>
                                                 {t.status === '已繳' ? '恢復為待處理' : '本期已繳費完成'}
                                             </button>
                                         </div>
